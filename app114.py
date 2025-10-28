@@ -1,4 +1,4 @@
-# =====================================
+# ===================================== 
 # Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”
 # =====================================
 import streamlit as st
@@ -13,7 +13,6 @@ import unicodedata, re
 # -------------------------------
 st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号）")
 
-
 # =====================================
 # 一、上传文件
 # =====================================
@@ -27,7 +26,6 @@ if not uploaded_files or len(uploaded_files) < 3:
     st.stop()
 else:
     st.success("✅ 文件上传完成")
-
 
 # =====================================
 # 二、工具函数
@@ -61,15 +59,21 @@ def normalize_num(val):
     except:
         return None
 
-def find_col(df, keyword, exact=False):
-    """模糊/精确匹配列名"""
+def find_col(df_like, keyword, exact=False):
+    """
+    模糊/精确匹配列名，支持 DataFrame 或 Series
+    """
     key = keyword.strip().lower()
-    for col in df.columns:
+    if hasattr(df_like, "columns"):
+        columns = df_like.columns
+    else:
+        columns = df_like.index
+
+    for col in columns:
         cname = str(col).strip().lower()
         if (exact and cname == key) or (not exact and key in cname):
             return col
     return None
-
 
 # =====================================
 # 三、读取文件
@@ -97,30 +101,26 @@ if not fk_sheets:
     st.stop()
 fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_sheets]
 
-# --- 二次明细：读取文件名包含“二次”的所有sheet并合并 ---
+# --- 二次明细：读取所有sheet并合并 ---
 ec_xls = pd.ExcelFile(ec_file)
-ec_sheets = ec_xls.sheet_names  # 读取所有sheet
+ec_sheets = ec_xls.sheet_names
 if not ec_sheets:
     st.error("❌ 二次明细文件中没有sheet")
     st.stop()
-# 读取所有sheet并合并
 ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_sheets]
 ec_df = pd.concat(ec_df_list, ignore_index=True)
 st.success(f"✅ 成功读取 二次明细文件中 {len(ec_sheets)} 个 sheet，共 {len(ec_df)} 行数据")
 
-
-
 # =====================================
 # 四、字段映射定义
 # =====================================
-# 「总」字段 → 对应明细字段
 MAPPING = {
-    "放款日期": ("放款明细", "放款日期", 0, 1),       # 日期比对
+    "放款日期": ("放款明细", "放款日期", 0, 1),
     "提报人员": ("放款明细", "提报人员", 0, 1),
     "城市经理": ("放款明细", "城市经理", 0, 1),
     "租赁本金": ("放款明细", "租赁本金", 0, 1),
-    "收益率":   ("放款明细", "xirr", 0.005, 1),     # 收益率误差0.005
-    "期限":     ("放款明细", "租赁期限/年", 0.5, 12), # 年×12，允许±0.5月
+    "收益率": ("放款明细", "xirr", 0.005, 1),
+    "期限": ("放款明细", "租赁期限/年", 0.5, 12),
     "二次交接": ("二次明细", "出本流程时间", 0, 1),
 }
 
@@ -129,12 +129,10 @@ if not contract_col_main:
     st.error("❌ 『总』sheet 未找到合同号列")
     st.stop()
 
-
 # =====================================
 # 五、主比对函数
 # =====================================
 def get_ref_row(contract_no, source_type):
-    """根据合同号从不同明细中取对应行"""
     contract_no = str(contract_no).strip()
     if source_type == "放款明细":
         for df in fk_dfs:
@@ -151,7 +149,6 @@ def get_ref_row(contract_no, source_type):
             if not res.empty:
                 return res.iloc[0]
     return None
-
 
 # =====================================
 # 六、执行审核
@@ -186,7 +183,8 @@ for idx, row in tc_df.iterrows():
         if ref_row is None:
             continue
 
-        ref_col = find_col(ref_row.index.to_series(), ref_kw)
+        # ✅ 方法B修改：直接传Series给find_col，不再使用to_series()
+        ref_col = find_col(ref_row, ref_kw)
         if not ref_col:
             continue
 
@@ -240,7 +238,7 @@ for idx, row in tc_df.iterrows():
         ws.cell(idx + 2, j, val)
 
     progress.progress((idx + 1) / n)
-    if (idx + 1) % 10 == 0 or idx + 1 == n:
+    if (idx + 1) % 10 == 0 or (idx + 1) == n:
         status.text(f"审核进度：{idx + 1}/{n}")
 
 # =====================================
