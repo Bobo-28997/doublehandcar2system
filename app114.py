@@ -104,13 +104,8 @@ ec_xls = pd.ExcelFile(ec_file)
 ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_xls.sheet_names]
 ec_df = pd.concat(ec_df_list, ignore_index=True)
 
-# 原表：自动匹配含“总”的第一个sheet
 original_xls = pd.ExcelFile(original_file)
-sheet_name_total = next((s for s in original_xls.sheet_names if "总" in s), None)
-if sheet_name_total is None:
-    st.error("❌ 原表文件中未找到包含“总”的sheet")
-    st.stop()
-original_df = pd.read_excel(original_xls, sheet_name=sheet_name_total)
+original_df = pd.read_excel(original_xls)
 
 st.success(f"✅ 文件读取完成，提成总sheet {len(tc_df)} 行，原表 {len(original_df)} 行")
 
