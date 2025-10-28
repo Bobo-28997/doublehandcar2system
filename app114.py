@@ -1,5 +1,6 @@
 # =====================================
 # Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号 + 精简错误下载）
+# 修复：复制颜色时为目标工作簿创建新的 PatternFill（避免跨工作簿复用样式对象）
 # =====================================
 import streamlit as st
 import pandas as pd
@@ -213,12 +214,12 @@ for idx, row in tc_df.iterrows():
         progress.progress((idx + 1) / n)
         status.text(f"审核进度：{idx + 1}/{n}")
 
-# ========== 输出结果 ==========
+# ========== 输出结果（含修复：安全复制样式） ==========
 output_full = BytesIO()
 wb.save(output_full)
 output_full.seek(0)
 
-# 生成精简错误表
+# 生成精简错误表：复制值并为有颜色的单元格在新工作簿用新 PatternFill 重建颜色
 wb_error = Workbook()
 ws_err = wb_error.active
 for i, col_name in enumerate(tc_df.columns, start=1):
@@ -227,11 +228,37 @@ for i, col_name in enumerate(tc_df.columns, start=1):
 row_idx = 2
 for idx in sorted(error_rows):
     for j, val in enumerate(tc_df.iloc[idx], start=1):
+        # 写值
         ws_err.cell(row_idx, j, val)
-        # 从主表复制颜色
-        c = ws.cell(idx + 2, j)
-        if c.fill and c.fill.fill_type:
-            ws_err.cell(row_idx, j).fill = c.fill
+        # 从主工作表读取原始单元格（注意：ws 是原工作簿的sheet）
+        orig_cell = ws.cell(idx + 2, j)
+        fill = orig_cell.fill
+        # 仅在原单元格有填充类型时，创建新的 PatternFill 并赋给目标单元格
+        try:
+            if hasattr(fill, "fill_type") and fill.fill_type not in (None, "none", ""):
+                # 尝试取出 start_color / end_color 的 rgb 或 index
+                start = None
+                end = None
+                try:
+                    start = getattr(fill.start_color, "rgb", None) or getattr(fill.start_color, "index", None)
+                except Exception:
+                    start = None
+                try:
+                    end = getattr(fill.end_color, "rgb", None) or getattr(fill.end_color, "index", None)
+                except Exception:
+                    end = None
+
+                # 如果无法获得颜色字符串，可回退到固定颜色（不过一般不会遇到）
+                if start is None and end is None:
+                    # 跳过样式复制（保留无样式）
+                    pass
+                else:
+                    # 创建新 PatternFill（在目标工作簿中），避免直接复用原对象
+                    new_fill = PatternFill(fill_type=fill.fill_type, start_color=start, end_color=end)
+                    ws_err.cell(row_idx, j).fill = new_fill
+        except Exception:
+            # 容错：若复制样式失败，继续但不阻断整个流程
+            pass
     row_idx += 1
 
 output_err = BytesIO()
@@ -247,9 +274,9 @@ st.download_button(
 )
 
 st.download_button(
-    "📥 下载仅错误与标黄合同号精简版",
+    "📥 下载仅错误与标黄合同号精简版（含红黄标记）",
     data=output_err,
-    file_name="提成_错误精简版.xlsx",
+    file_name="提成_错误精简版_带颜色.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
