@@ -1,5 +1,5 @@
-# ===================================== 
-# Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”
+# =====================================  
+# Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”  
 # =====================================
 import streamlit as st
 import pandas as pd
@@ -179,20 +179,18 @@ for idx, row in tc_df.iterrows():
         main_val = row[main_col]
         ref_val = ref_row[ref_col]
 
-        # 日期字段比对
+        # ✅ 稳健日期比对：只比对年月日
         if "日期" in main_kw or main_kw == "二次交接":
-            main_dt = pd.to_datetime(main_val, errors="coerce")
-            ref_dt = pd.to_datetime(ref_val, errors="coerce")
-            if pd.isna(main_dt) or pd.isna(ref_dt):
-                row_has_error = True
-            else:
-                # 对比年月日，忽略时分秒
-                if not (main_dt.year == ref_dt.year and main_dt.month == ref_dt.month and main_dt.day == ref_dt.day):
-                    row_has_error = True
+            try:
+                main_dt = pd.to_datetime(main_val, errors='coerce').normalize()
+                ref_dt = pd.to_datetime(ref_val, errors='coerce').normalize()
+            except:
+                main_dt = ref_dt = pd.NaT
 
-            if row_has_error:
-                total_errors += 1
+            if pd.isna(main_dt) or pd.isna(ref_dt) or main_dt != ref_dt:
+                row_has_error = True
                 ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
+                total_errors += 1
 
         # 数值字段比对
         elif isinstance(normalize_num(main_val), (int, float)) or isinstance(normalize_num(ref_val), (int, float)):
@@ -227,23 +225,5 @@ for idx, row in tc_df.iterrows():
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
-    progress.progress((idx + 1) / n)
-    if (idx + 1) % 10 == 0 or (idx + 1) == n:
-        status.text(f"审核进度：{idx + 1}/{n}")
-
-# =====================================
-# 七、输出结果
-# =====================================
-output = BytesIO()
-wb.save(output)
-output.seek(0)
-
-st.download_button(
-    "📥 下载提成总sheet审核标注版",
-    data=output,
-    file_name="提成_总sheet_审核标注版.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-st.success(f"✅ 审核完成，共发现 {total_errors} 处错误")
+    progress.progress((idx + 1) / n
 
