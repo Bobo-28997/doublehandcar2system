@@ -253,9 +253,9 @@ output_err = BytesIO()
 wb_error.save(output_err)
 output_err.seek(0)
 
-# ========== 🔍 反向漏填检查：检测‘总’sheet是否遗漏其他表合同号 ==========
+# ========== 🔍 反向漏填检查（仅使用放款明细中包含“潮掣”的sheet） ==========
 st.divider()
-st.subheader("🔍 反向漏填检查：检测‘总’sheet是否遗漏其他表合同号")
+st.subheader("🔍 反向漏填检查（仅基于放款明细中包含“潮掣”的sheet）")
 
 def get_contracts_from_df(df):
     col = find_col(df, "合同", exact=False)
@@ -270,28 +270,27 @@ def get_contracts_from_fk_dfs(fk_list):
     return all_cons
 
 contracts_total = get_contracts_from_df(tc_df)
+# 只使用 fk_dfs（你之前只读取了包含“潮掣”的 sheets）
 contracts_fk = get_contracts_from_fk_dfs(fk_dfs)
-contracts_ec = get_contracts_from_df(ec_df)
-contracts_ori = get_contracts_from_df(original_df)
 
-contracts_check_sources = contracts_fk | contracts_ec | contracts_ori
-missing_contracts = sorted(list(contracts_check_sources - contracts_total))
+# 只对放款明细（潮掣 sheets）中的合同号进行反向检查
+missing_contracts = sorted(list(contracts_fk - contracts_total))
 
 if missing_contracts:
-    st.warning(f"⚠️ 发现 {len(missing_contracts)} 个合同号存在于放款/二次/原表中，但未出现在总sheet中")
+    st.warning(f"⚠️ 发现 {len(missing_contracts)} 个合同号存在于放款明细（含“潮掣”的sheet）中，但未出现在提成表的‘总’sheet中")
     df_missing = pd.DataFrame({"漏填合同号": missing_contracts})
     output_missing = BytesIO()
     with pd.ExcelWriter(output_missing, engine="openpyxl") as writer:
         df_missing.to_excel(writer, index=False, sheet_name="漏填合同号")
     output_missing.seek(0)
     st.download_button(
-        "📥 下载漏填合同号表",
+        "📥 下载漏填合同号表（基于放款明细-潮掣）",
         data=output_missing,
-        file_name="提成_漏填合同号.xlsx",
+        file_name="提成_漏填合同号_基于放款明细_潮掣.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
-    st.success("✅ 未发现漏填合同号，‘总’sheet已覆盖所有检查来源。")
+    st.success("✅ 未发现漏填合同号（基于放款明细-潮掣）。")
 
 # ========== 下载区 ==========
 st.divider()
