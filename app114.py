@@ -225,5 +225,5 @@ for idx, row in tc_df.iterrows():
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
-    progress.progress((idx + 1) / n
+    progress.progress((idx + 1) / n)
 
