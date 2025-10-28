@@ -97,9 +97,17 @@ if not fk_sheets:
     st.stop()
 fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_sheets]
 
-# --- 二次明细 ---
+# --- 二次明细：读取文件名包含“二次”的所有sheet并合并 ---
 ec_xls = pd.ExcelFile(ec_file)
-ec_df = pd.read_excel(ec_file, sheet_name=[s for s in ec_xls.sheet_names if "二次" in s][0])
+ec_sheets = ec_xls.sheet_names  # 读取所有sheet
+if not ec_sheets:
+    st.error("❌ 二次明细文件中没有sheet")
+    st.stop()
+# 读取所有sheet并合并
+ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_sheets]
+ec_df = pd.concat(ec_df_list, ignore_index=True)
+st.success(f"✅ 成功读取 二次明细文件中 {len(ec_sheets)} 个 sheet，共 {len(ec_df)} 行数据")
+
 
 
 # =====================================
