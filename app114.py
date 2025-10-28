@@ -1,5 +1,5 @@
-# =====================================  
-# Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”  
+# =====================================
+# Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”
 # =====================================
 import streamlit as st
 import pandas as pd
@@ -48,8 +48,7 @@ def normalize_text(val):
     s = str(val)
     s = re.sub(r'[\n\r\t ]+', '', s)
     s = s.replace('\u3000', '')
-    s = ''.join(unicodedata.normalize('NFKC', ch) for ch in s)
-    return s.lower().strip()
+    return ''.join(unicodedata.normalize('NFKC', ch) for ch in s).lower().strip()
 
 def normalize_num(val):
     if pd.isna(val):
@@ -112,7 +111,7 @@ MAPPING = {
     "提报人员": ("放款明细", "提报人员", 0, 1),
     "城市经理": ("放款明细", "城市经理", 0, 1),
     "租赁本金": ("放款明细", "租赁本金", 0, 1),
-    "收益率": ("放款明细", "XIRR", 0.005, 1),
+    "收益率": ("放款明细", "xirr", 0.005, 1),
     "期限": ("放款明细", "租赁期限/年", 0.5, 12),
     "二次交接": ("二次明细", "出本流程时间", 0, 1),
 }
@@ -187,23 +186,30 @@ for idx, row in tc_df.iterrows():
         main_val = row[main_col]
         ref_val = ref_row[ref_col]
 
-        # ✅ 稳健日期比对
+        # 日期比对
         if "日期" in main_kw or main_kw == "二次交接":
             try:
                 main_dt = pd.to_datetime(main_val, errors='coerce').normalize()
                 ref_dt = pd.to_datetime(ref_val, errors='coerce').normalize()
             except:
                 main_dt = ref_dt = pd.NaT
-
             if pd.isna(main_dt) or pd.isna(ref_dt) or main_dt != ref_dt:
                 row_has_error = True
                 ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
                 total_errors += 1
 
-        # 数值字段比对
-        elif isinstance(normalize_num(main_val), (int, float)) or isinstance(normalize_num(ref_val), (int, float)):
+        # 数值比对
+        else:
             m = normalize_num(main_val)
             r = normalize_num(ref_val)
+
+            # 收益率特殊处理：统一为小数
+            if main_kw == "收益率":
+                if m is not None and m > 1:
+                    m = m / 100
+                if r is not None and r > 1:
+                    r = r / 100
+
             if m is not None and r is not None:
                 if "期限" in main_kw:
                     r = r * mult
@@ -216,16 +222,12 @@ for idx, row in tc_df.iterrows():
                     row_has_error = True
                     total_errors += 1
                     ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
-        else:
-            if normalize_text(main_val) != normalize_text(ref_val):
-                row_has_error = True
-                total_errors += 1
-                ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
+    # 标记合同号
     if row_has_error:
         ws.cell(idx + 2, list(tc_df.columns).index(contract_col_main) + 1).fill = yellow_fill
 
-    # 填写原数据
+    # 写入原数据
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
