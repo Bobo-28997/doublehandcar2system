@@ -1,4 +1,4 @@
-# =====================================
+# ===================================== 
 # Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”
 # =====================================
 import streamlit as st
@@ -113,7 +113,7 @@ MAPPING = {
     "租赁本金": ("放款明细", "租赁本金", 0, 1),
     "收益率": ("放款明细", "xirr", 0.005, 1),
     "期限": ("放款明细", "租赁期限/年", 0.5, 12),
-    "人员类型": ("放款明细", "车辆属性", 0, 1),
+    "人员类型": ("放款明细", "类型", 0, 1),  # 严格匹配“类型”
     "二次交接": ("二次明细", "出本流程时间", 0, 1),
 }
 
@@ -172,7 +172,11 @@ for idx, row in tc_df.iterrows():
     row_has_error = False
 
     for main_kw, (src, ref_kw, tol, mult) in MAPPING.items():
-        main_col = find_col(tc_df, main_kw, exact=("期限" in main_kw))
+        # 判断是否严格匹配
+        exact_main = "期限" in main_kw
+        exact_ref = True if main_kw == "人员类型" else False
+
+        main_col = find_col(tc_df, main_kw, exact=exact_main)
         if not main_col:
             continue
 
@@ -180,7 +184,7 @@ for idx, row in tc_df.iterrows():
         if ref_row is None:
             continue
 
-        ref_col = find_col(ref_row, ref_kw)
+        ref_col = find_col(ref_row, ref_kw, exact=exact_ref)
         if not ref_col:
             continue
 
@@ -196,24 +200,24 @@ for idx, row in tc_df.iterrows():
                 main_dt = ref_dt = pd.NaT
             if pd.isna(main_dt) or pd.isna(ref_dt) or main_dt != ref_dt:
                 row_has_error = True
-                ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
                 total_errors += 1
+                ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
         # 数值比对
         else:
             m = normalize_num(main_val)
             r = normalize_num(ref_val)
 
-            # 收益率特殊处理：统一为小数
+            # 收益率统一为小数
             if main_kw == "收益率":
                 if m is not None and m > 1:
-                    m = m / 100
+                    m /= 100
                 if r is not None and r > 1:
-                    r = r / 100
+                    r /= 100
 
             if m is not None and r is not None:
                 if "期限" in main_kw:
-                    r = r * mult
+                    r *= mult
                 if abs(m - r) > tol:
                     row_has_error = True
                     total_errors += 1
@@ -232,7 +236,7 @@ for idx, row in tc_df.iterrows():
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
-    # 优化进度条：每10行或最后一行更新
+    # 优化进度条
     if (idx + 1) % 10 == 0 or (idx + 1) == n:
         progress.progress((idx + 1) / n)
         status.text(f"审核进度：{idx + 1}/{n}")
