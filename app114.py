@@ -1,12 +1,11 @@
 # =====================================
-# Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号 + 错误精简版输出）
+# Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号 + 精简错误下载）
 # =====================================
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 import unicodedata, re
 
-# 安全导入 openpyxl
 try:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill
@@ -14,14 +13,9 @@ except ImportError:
     st.error("❌ openpyxl 未安装，请执行 pip install openpyxl")
     st.stop()
 
-# -------------------------------
-# 页面标题
-# -------------------------------
-st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号 + 错误精简版输出）")
+st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号 + 精简错误下载）")
 
-# =====================================
-# 一、上传文件
-# =====================================
+# ========== 上传文件 ==========
 uploaded_files = st.file_uploader(
     "请上传包含“提成”、“放款明细”、“二次明细”和“原表”的xlsx文件",
     type="xlsx", accept_multiple_files=True
@@ -30,12 +24,8 @@ uploaded_files = st.file_uploader(
 if not uploaded_files or len(uploaded_files) < 4:
     st.warning("⚠️ 请至少上传 提成表、放款明细、二次明细、原表 四个文件")
     st.stop()
-else:
-    st.success("✅ 文件上传完成")
 
-# =====================================
-# 二、工具函数
-# =====================================
+# ========== 工具函数 ==========
 def find_file(files_list, keyword):
     for f in files_list:
         if keyword in f.name:
@@ -70,47 +60,28 @@ def find_col(df_like, keyword, exact=False):
             return col
     return None
 
-# =====================================
-# 三、读取文件
-# =====================================
+# ========== 读取文件 ==========
 tc_file = find_file(uploaded_files, "提成")
 fk_file = find_file(uploaded_files, "放款明细")
 ec_file = find_file(uploaded_files, "二次明细")
 original_file = find_file(uploaded_files, "原表")
 
-if not (tc_file and fk_file and ec_file and original_file):
-    st.error("❌ 文件缺失，请确保文件名中包含 提成、放款明细、二次明细、原表")
-    st.stop()
-
-# 提成表：自动选择含“总”的sheet
 tc_xls = pd.ExcelFile(tc_file)
 sheet_total = next((s for s in tc_xls.sheet_names if "总" in s), None)
-if sheet_total is None:
-    st.error("❌ 提成文件中未找到包含“总”的sheet")
-    st.stop()
 tc_df = pd.read_excel(tc_file, sheet_name=sheet_total)
 
-# 放款明细：仅取包含“潮掣”的sheet
 fk_xls = pd.ExcelFile(fk_file)
-fk_sheets = [s for s in fk_xls.sheet_names if "潮掣" in s]
-if not fk_sheets:
-    st.error("❌ 放款明细文件中未找到包含“潮掣”的sheet")
-    st.stop()
-fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_sheets]
+fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_xls.sheet_names if "潮掣" in s]
 
-# 二次明细：合并所有sheet
 ec_xls = pd.ExcelFile(ec_file)
-ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_xls.sheet_names]
-ec_df = pd.concat(ec_df_list, ignore_index=True)
+ec_df = pd.concat([pd.read_excel(ec_file, sheet_name=s) for s in ec_xls.sheet_names], ignore_index=True)
 
 original_xls = pd.ExcelFile(original_file)
 original_df = pd.read_excel(original_xls)
 
-st.success(f"✅ 文件读取完成，提成总sheet {len(tc_df)} 行，原表 {len(original_df)} 行")
+st.success("✅ 文件读取完成")
 
-# =====================================
-# 四、字段映射定义
-# =====================================
+# ========== 定义映射 ==========
 MAPPING = {
     "放款日期": ("放款明细", "放款日期", 0, 1),
     "提报人员": ("放款明细", "提报人员", 0, 1),
@@ -124,13 +95,8 @@ MAPPING = {
 }
 
 contract_col_main = find_col(tc_df, "合同")
-if not contract_col_main:
-    st.error("❌ 提成总sheet 未找到合同号列")
-    st.stop()
 
-# =====================================
-# 五、主比对函数
-# =====================================
+# ========== 比对辅助函数 ==========
 def get_ref_row(contract_no, source_type):
     contract_no = str(contract_no).strip()
     if source_type == "放款明细":
@@ -155,9 +121,7 @@ def get_ref_row(contract_no, source_type):
                 return res.iloc[0]
     return None
 
-# =====================================
-# 六、执行审核
-# =====================================
+# ========== 执行审核 ==========
 wb = Workbook()
 ws = wb.active
 for i, col_name in enumerate(tc_df.columns, start=1):
@@ -166,13 +130,14 @@ for i, col_name in enumerate(tc_df.columns, start=1):
 red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
-error_rows = []  # 🔸 保存错误行
 total_errors = 0
-n = len(tc_df)
+error_rows = set()
+
 progress = st.progress(0)
 status = st.empty()
 
 person_type_col = find_col(tc_df, "人员类型", exact=True)
+n = len(tc_df)
 
 for idx, row in tc_df.iterrows():
     contract_no = row.get(contract_col_main)
@@ -207,7 +172,6 @@ for idx, row in tc_df.iterrows():
         main_val = row[main_col]
         ref_val = ref_row[ref_col]
 
-        # 日期字段检查
         if "日期" in main_kw or main_kw == "二次交接":
             try:
                 main_dt = pd.to_datetime(main_val, errors='coerce').normalize()
@@ -237,9 +201,10 @@ for idx, row in tc_df.iterrows():
                     total_errors += 1
                     ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
+    # 标黄合同号
     if row_has_error:
-        error_rows.append(row)  # 🔸 保存整行
         ws.cell(idx + 2, list(tc_df.columns).index(contract_col_main) + 1).fill = yellow_fill
+        error_rows.add(idx)
 
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
@@ -248,31 +213,44 @@ for idx, row in tc_df.iterrows():
         progress.progress((idx + 1) / n)
         status.text(f"审核进度：{idx + 1}/{n}")
 
-# =====================================
-# 七、输出结果
-# =====================================
-output_all = BytesIO()
-wb.save(output_all)
-output_all.seek(0)
+# ========== 输出结果 ==========
+output_full = BytesIO()
+wb.save(output_full)
+output_full.seek(0)
 
+# 生成精简错误表
+wb_error = Workbook()
+ws_err = wb_error.active
+for i, col_name in enumerate(tc_df.columns, start=1):
+    ws_err.cell(1, i, col_name)
+
+row_idx = 2
+for idx in sorted(error_rows):
+    for j, val in enumerate(tc_df.iloc[idx], start=1):
+        ws_err.cell(row_idx, j, val)
+        # 从主表复制颜色
+        c = ws.cell(idx + 2, j)
+        if c.fill and c.fill.fill_type:
+            ws_err.cell(row_idx, j).fill = c.fill
+    row_idx += 1
+
+output_err = BytesIO()
+wb_error.save(output_err)
+output_err.seek(0)
+
+# 下载按钮
 st.download_button(
-    "📥 下载提成总sheet审核标注版（全表）",
-    data=output_all,
+    "📥 下载提成总sheet审核标注版",
+    data=output_full,
     file_name="提成_总sheet_审核标注版.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-# 🔸 生成错误行精简表
-if error_rows:
-    error_df = pd.DataFrame(error_rows)
-    error_output = BytesIO()
-    error_df.to_excel(error_output, index=False)
-    error_output.seek(0)
-    st.download_button(
-        "⚠️ 下载仅含错误行（红黄标注）精简版",
-        data=error_output,
-        file_name="提成_总sheet_错误行精简版.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+st.download_button(
+    "📥 下载仅错误与标黄合同号精简版",
+    data=output_err,
+    file_name="提成_错误精简版.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
-st.success(f"✅ 审核完成，共发现 {total_errors} 处错误，涉及 {len(error_rows)} 行")
+st.success(f"✅ 审核完成，共发现 {total_errors} 处错误，{len(error_rows)} 行合同涉及异常")
