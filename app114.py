@@ -1,5 +1,5 @@
 # =====================================
-# Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号）
+# Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号 + 错误精简版输出）
 # =====================================
 import streamlit as st
 import pandas as pd
@@ -17,7 +17,7 @@ except ImportError:
 # -------------------------------
 # 页面标题
 # -------------------------------
-st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号）")
+st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号 + 错误精简版输出）")
 
 # =====================================
 # 一、上传文件
@@ -62,7 +62,6 @@ def normalize_num(val):
         return None
 
 def find_col(df_like, keyword, exact=False):
-    """在DataFrame中查找包含关键字的列"""
     key = keyword.strip().lower()
     columns = df_like.columns if hasattr(df_like, "columns") else df_like.index
     for col in columns:
@@ -130,7 +129,7 @@ if not contract_col_main:
     st.stop()
 
 # =====================================
-# 五、主比对函数（含原表模糊匹配）
+# 五、主比对函数
 # =====================================
 def get_ref_row(contract_no, source_type):
     contract_no = str(contract_no).strip()
@@ -149,7 +148,7 @@ def get_ref_row(contract_no, source_type):
             if not res.empty:
                 return res.iloc[0]
     elif source_type == "原表":
-        col = find_col(original_df, "合同", exact=False)  # 模糊匹配“合同”
+        col = find_col(original_df, "合同", exact=False)
         if col is not None:
             res = original_df[original_df[col].astype(str).str.strip() == contract_no]
             if not res.empty:
@@ -159,12 +158,7 @@ def get_ref_row(contract_no, source_type):
 # =====================================
 # 六、执行审核
 # =====================================
-try:
-    wb = Workbook()
-except Exception as e:
-    st.error(f"❌ Workbook 初始化失败: {e}")
-    st.stop()
-
+wb = Workbook()
 ws = wb.active
 for i, col_name in enumerate(tc_df.columns, start=1):
     ws.cell(1, i, col_name)
@@ -172,6 +166,7 @@ for i, col_name in enumerate(tc_df.columns, start=1):
 red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
+error_rows = []  # 🔸 保存错误行
 total_errors = 0
 n = len(tc_df)
 progress = st.progress(0)
@@ -192,7 +187,6 @@ for idx, row in tc_df.iterrows():
         if not main_col:
             continue
 
-        # 判断使用哪个参考表
         if main_kw == "收益率":
             person_type = str(row[person_type_col]).strip()
             if person_type == "轻卡":
@@ -213,7 +207,7 @@ for idx, row in tc_df.iterrows():
         main_val = row[main_col]
         ref_val = ref_row[ref_col]
 
-        # 日期比对
+        # 日期字段检查
         if "日期" in main_kw or main_kw == "二次交接":
             try:
                 main_dt = pd.to_datetime(main_val, errors='coerce').normalize()
@@ -244,6 +238,7 @@ for idx, row in tc_df.iterrows():
                     ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
     if row_has_error:
+        error_rows.append(row)  # 🔸 保存整行
         ws.cell(idx + 2, list(tc_df.columns).index(contract_col_main) + 1).fill = yellow_fill
 
     for j, val in enumerate(row, start=1):
@@ -256,15 +251,28 @@ for idx, row in tc_df.iterrows():
 # =====================================
 # 七、输出结果
 # =====================================
-output = BytesIO()
-wb.save(output)
-output.seek(0)
+output_all = BytesIO()
+wb.save(output_all)
+output_all.seek(0)
 
 st.download_button(
-    "📥 下载提成总sheet审核标注版",
-    data=output,
+    "📥 下载提成总sheet审核标注版（全表）",
+    data=output_all,
     file_name="提成_总sheet_审核标注版.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-st.success(f"✅ 审核完成，共发现 {total_errors} 处错误")
+# 🔸 生成错误行精简表
+if error_rows:
+    error_df = pd.DataFrame(error_rows)
+    error_output = BytesIO()
+    error_df.to_excel(error_output, index=False)
+    error_output.seek(0)
+    st.download_button(
+        "⚠️ 下载仅含错误行（红黄标注）精简版",
+        data=error_output,
+        file_name="提成_总sheet_错误行精简版.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+st.success(f"✅ 审核完成，共发现 {total_errors} 处错误，涉及 {len(error_rows)} 行")
