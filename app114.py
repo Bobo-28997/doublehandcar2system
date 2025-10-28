@@ -83,7 +83,18 @@ if not (tc_file and fk_file and ec_file and original_file):
     st.stop()
 
 # 提成总sheet
-tc_df = pd.read_excel(tc_file, sheet_name="总")
+# 读取原表文件，并自动匹配第一个包含“总”字的 sheet
+original_xls = pd.ExcelFile(original_file)
+# 找到第一个包含“总”的 sheet 名称
+sheet_name_total = next((s for s in original_xls.sheet_names if "总" in s), None)
+
+if sheet_name_total is None:
+    st.error("❌ 原表文件中未找到包含“总”的 sheet")
+    st.stop()
+
+original_df = pd.read_excel(original_xls, sheet_name=sheet_name_total)
+st.success(f"✅ 原表文件读取完成，使用 sheet: {sheet_name_total}，共 {len(original_df)} 行数据")
+
 
 # 放款明细
 fk_xls = pd.ExcelFile(fk_file)
