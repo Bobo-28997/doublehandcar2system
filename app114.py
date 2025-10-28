@@ -1,4 +1,4 @@
-# ===================================== 
+# =====================================
 # Streamlit App: “提成表总sheet自动审核（标红错误格 + 标黄合同号）”
 # =====================================
 import streamlit as st
@@ -28,7 +28,7 @@ uploaded_files = st.file_uploader(
 )
 
 if not uploaded_files or len(uploaded_files) < 4:
-    st.warning("⚠️ 请至少上传 提成表、放款明细、二次明细 和 原表 四个文件")
+    st.warning("⚠️ 请至少上传 提成表、放款明细、二次明细、原表 四个文件")
     st.stop()
 else:
     st.success("✅ 文件上传完成")
@@ -79,38 +79,42 @@ ec_file = find_file(uploaded_files, "二次明细")
 original_file = find_file(uploaded_files, "原表")
 
 if not (tc_file and fk_file and ec_file and original_file):
-    st.error("❌ 文件缺失，请确保上传 提成表、放款明细、二次明细 和 原表")
+    st.error("❌ 文件缺失，请确保文件名中包含 提成、放款明细、二次明细、原表")
     st.stop()
 
-# 提成总sheet
-# 读取原表文件，并自动匹配第一个包含“总”字的 sheet
-original_xls = pd.ExcelFile(original_file)
-# 找到第一个包含“总”的 sheet 名称
-sheet_name_total = next((s for s in original_xls.sheet_names if "总" in s), None)
-
-if sheet_name_total is None:
-    st.error("❌ 原表文件中未找到包含“总”的 sheet")
+# 读取提成表总 sheet
+tc_xls = pd.ExcelFile(tc_file)
+if "总" not in tc_xls.sheet_names:
+    st.error("❌ 提成文件中未找到 sheet『总』")
     st.stop()
+tc_df = pd.read_excel(tc_file, sheet_name="总")
 
-original_df = pd.read_excel(original_xls, sheet_name=sheet_name_total)
-st.success(f"✅ 原表文件读取完成，使用 sheet: {sheet_name_total}，共 {len(original_df)} 行数据")
-
-
-# 放款明细
+# 读取放款明细
 fk_xls = pd.ExcelFile(fk_file)
 fk_sheets = [s for s in fk_xls.sheet_names if "潮掣" in s]
+if not fk_sheets:
+    st.error("❌ 放款明细文件中未找到包含“潮掣”的sheet")
+    st.stop()
 fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_sheets]
 
-# 二次明细
+# 读取二次明细
 ec_xls = pd.ExcelFile(ec_file)
 ec_sheets = ec_xls.sheet_names
+if not ec_sheets:
+    st.error("❌ 二次明细文件中没有sheet")
+    st.stop()
 ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_sheets]
 ec_df = pd.concat(ec_df_list, ignore_index=True)
 
-# 原表
-original_df = pd.read_excel(original_file, sheet_name="总")
+# 读取原表，用于轻卡收益率
+original_xls = pd.ExcelFile(original_file)
+sheet_name_total = next((s for s in original_xls.sheet_names if "总" in s), None)
+if sheet_name_total is None:
+    st.error("❌ 原表文件中未找到包含“总”的sheet")
+    st.stop()
+original_df = pd.read_excel(original_xls, sheet_name=sheet_name_total)
 
-st.success("✅ 文件读取完成")
+st.success(f"✅ 文件读取完成，提成总sheet {len(tc_df)} 行，原表 {len(original_df)} 行")
 
 # =====================================
 # 四、字段映射定义
@@ -127,11 +131,14 @@ MAPPING = {
 }
 
 contract_col_main = find_col(tc_df, "合同")
+if not contract_col_main:
+    st.error("❌ 提成总sheet 未找到合同号列")
+    st.stop()
 
 # =====================================
 # 五、主比对函数
 # =====================================
-def get_ref_row(contract_no, source_type, fk_dfs=fk_dfs):
+def get_ref_row(contract_no, source_type):
     contract_no = str(contract_no).strip()
     if source_type == "放款明细":
         for df in fk_dfs:
@@ -176,6 +183,9 @@ n = len(tc_df)
 progress = st.progress(0)
 status = st.empty()
 
+# 找到“人员类型”列
+person_type_col = find_col(tc_df, "人员类型", exact=True)
+
 for idx, row in tc_df.iterrows():
     contract_no = row.get(contract_col_main)
     if pd.isna(contract_no):
@@ -183,26 +193,30 @@ for idx, row in tc_df.iterrows():
 
     row_has_error = False
 
-    # 获取人员类型
-    personnel_col = find_col(tc_df, "人员类型", exact=True)
-    personnel_type = str(row[personnel_col]).strip() if personnel_col else ""
-
     for main_kw, (src, ref_kw, tol, mult) in MAPPING.items():
-        exact_main = "期限" in main_kw
-        exact_ref = True if main_kw == "人员类型" else False
+        exact_main = "期限" in main_kw or main_kw == "人员类型"
+
         main_col = find_col(tc_df, main_kw, exact=exact_main)
         if not main_col:
             continue
 
-        # 收益率特殊逻辑
-        if main_kw == "收益率" and personnel_type.lower() == "轻卡":
-            ref_row = get_ref_row(contract_no, "原表")
-            ref_col = find_col(ref_row, "年化NIM") if ref_row is not None else None
+        # 判断使用哪个参考表
+        if main_kw == "收益率":
+            # 根据人员类型选择逻辑
+            person_type = str(row[person_type_col]).strip()
+            if person_type == "轻卡":
+                ref_row = get_ref_row(contract_no, "原表")
+                ref_kw = "年化NIM"
+            else:
+                ref_row = get_ref_row(contract_no, src)
         else:
             ref_row = get_ref_row(contract_no, src)
-            ref_col = find_col(ref_row, ref_kw, exact=exact_ref) if ref_row is not None else None
 
-        if ref_row is None or ref_col is None:
+        if ref_row is None:
+            continue
+
+        ref_col = find_col(ref_row, ref_kw, exact=(main_kw == "人员类型"))
+        if not ref_col:
             continue
 
         main_val = row[main_col]
@@ -226,11 +240,9 @@ for idx, row in tc_df.iterrows():
             r = normalize_num(ref_val)
 
             # 收益率统一为小数
-            if main_kw == "收益率":
-                if m is not None and m > 1:
-                    m /= 100
-                if r is not None and r > 1:
-                    r /= 100
+            if main_kw == "收益率" and m is not None and r is not None:
+                if m > 1: m /= 100
+                if r > 1: r /= 100
 
             if m is not None and r is not None:
                 if "期限" in main_kw:
@@ -253,6 +265,7 @@ for idx, row in tc_df.iterrows():
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
+    # 更新进度条
     if (idx + 1) % 10 == 0 or (idx + 1) == n:
         progress.progress((idx + 1) / n)
         status.text(f"审核进度：{idx + 1}/{n}")
