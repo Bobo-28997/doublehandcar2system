@@ -31,14 +31,12 @@ else:
 # 二、工具函数
 # =====================================
 def find_file(files_list, keyword):
-    """通过关键词找到文件"""
     for f in files_list:
         if keyword in f.name:
             return f
     return None
 
 def normalize_text(val):
-    """标准化文本"""
     if pd.isna(val):
         return ""
     s = str(val)
@@ -48,7 +46,6 @@ def normalize_text(val):
     return s.lower().strip()
 
 def normalize_num(val):
-    """标准化数值"""
     if pd.isna(val):
         return None
     s = str(val).replace(",", "").replace("%", "").strip()
@@ -60,15 +57,11 @@ def normalize_num(val):
         return None
 
 def find_col(df_like, keyword, exact=False):
-    """
-    模糊/精确匹配列名，支持 DataFrame 或 Series
-    """
     key = keyword.strip().lower()
     if hasattr(df_like, "columns"):
         columns = df_like.columns
     else:
         columns = df_like.index
-
     for col in columns:
         cname = str(col).strip().lower()
         if (exact and cname == key) or (not exact and key in cname):
@@ -86,14 +79,12 @@ if not (tc_file and fk_file and ec_file):
     st.error("❌ 文件缺失，请确保文件名中包含 “提成”、“放款明细”、“二次明细”")
     st.stop()
 
-# --- 提成总sheet ---
 tc_xls = pd.ExcelFile(tc_file)
 if "总" not in tc_xls.sheet_names:
     st.error("❌ 提成文件中未找到 sheet『总』")
     st.stop()
 tc_df = pd.read_excel(tc_file, sheet_name="总")
 
-# --- 放款明细中含“潮掣”的两个sheet ---
 fk_xls = pd.ExcelFile(fk_file)
 fk_sheets = [s for s in fk_xls.sheet_names if "潮掣" in s]
 if not fk_sheets:
@@ -101,7 +92,6 @@ if not fk_sheets:
     st.stop()
 fk_dfs = [pd.read_excel(fk_file, sheet_name=s) for s in fk_sheets]
 
-# --- 二次明细：读取所有sheet并合并 ---
 ec_xls = pd.ExcelFile(ec_file)
 ec_sheets = ec_xls.sheet_names
 if not ec_sheets:
@@ -155,7 +145,6 @@ def get_ref_row(contract_no, source_type):
 # =====================================
 wb = Workbook()
 ws = wb.active
-
 for i, col_name in enumerate(tc_df.columns, start=1):
     ws.cell(1, i, col_name)
 
@@ -183,7 +172,6 @@ for idx, row in tc_df.iterrows():
         if ref_row is None:
             continue
 
-        # ✅ 方法B修改：直接传Series给find_col，不再使用to_series()
         ref_col = find_col(ref_row, ref_kw)
         if not ref_col:
             continue
@@ -192,13 +180,17 @@ for idx, row in tc_df.iterrows():
         ref_val = ref_row[ref_col]
 
         # 日期字段比对
-        if "日期" in main_kw:
+        if "日期" in main_kw or main_kw == "二次交接":
             main_dt = pd.to_datetime(main_val, errors="coerce")
             ref_dt = pd.to_datetime(ref_val, errors="coerce")
-            if pd.isna(main_dt) or pd.isna(ref_dt) or not (
-                main_dt.year == ref_dt.year and main_dt.month == ref_dt.month and main_dt.day == ref_dt.day
-            ):
+            if pd.isna(main_dt) or pd.isna(ref_dt):
                 row_has_error = True
+            else:
+                # 对比年月日，忽略时分秒
+                if not (main_dt.year == ref_dt.year and main_dt.month == ref_dt.month and main_dt.day == ref_dt.day):
+                    row_has_error = True
+
+            if row_has_error:
                 total_errors += 1
                 ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
@@ -229,11 +221,9 @@ for idx, row in tc_df.iterrows():
                 total_errors += 1
                 ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
-    # 若该行有错误，合同号标黄
     if row_has_error:
         ws.cell(idx + 2, list(tc_df.columns).index(contract_col_main) + 1).fill = yellow_fill
 
-    # 填写原数据
     for j, val in enumerate(row, start=1):
         ws.cell(idx + 2, j, val)
 
