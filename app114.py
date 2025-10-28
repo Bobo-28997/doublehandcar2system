@@ -1,12 +1,11 @@
 # =====================================
-# Streamlit App: 提成表总sheet自动审核（标红错误格 + 标黄合同号）
+# Streamlit App: 提成表总sheet自动审核（含家访检查）
 # =====================================
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 import unicodedata, re
 
-# 安全导入 openpyxl
 try:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill
@@ -14,10 +13,7 @@ except ImportError:
     st.error("❌ openpyxl 未安装，请执行 pip install openpyxl")
     st.stop()
 
-# -------------------------------
-# 页面标题
-# -------------------------------
-st.title("📊 提成表『总』sheet 自动审核工具（标红错误格 + 标黄合同号）")
+st.title("📊 提成表『总』sheet 自动审核工具（含家访检查 + 标红错误格 + 标黄合同号）")
 
 # =====================================
 # 一、上传文件
@@ -62,7 +58,6 @@ def normalize_num(val):
         return None
 
 def find_col(df_like, keyword, exact=False):
-    """在DataFrame中查找包含关键字的列"""
     key = keyword.strip().lower()
     columns = df_like.columns if hasattr(df_like, "columns") else df_like.index
     for col in columns:
@@ -104,6 +99,7 @@ ec_xls = pd.ExcelFile(ec_file)
 ec_df_list = [pd.read_excel(ec_file, sheet_name=s) for s in ec_xls.sheet_names]
 ec_df = pd.concat(ec_df_list, ignore_index=True)
 
+# 原表
 original_xls = pd.ExcelFile(original_file)
 original_df = pd.read_excel(original_xls)
 
@@ -121,16 +117,17 @@ MAPPING = {
     "期限": ("放款明细", "租赁期限/年", 0.5, 12),
     "人员类型": ("放款明细", "类型", 0, 1),
     "二次交接": ("二次明细", "出本流程时间", 0, 1),
+    "家访": ("放款明细", "家访", 0, 1),  # ✅ 新增家访检查
 }
 
+# =====================================
+# 五、查找参考行函数
+# =====================================
 contract_col_main = find_col(tc_df, "合同")
 if not contract_col_main:
     st.error("❌ 提成总sheet 未找到合同号列")
     st.stop()
 
-# =====================================
-# 五、主比对函数（含原表模糊匹配）
-# =====================================
 def get_ref_row(contract_no, source_type):
     contract_no = str(contract_no).strip()
     if source_type == "放款明细":
@@ -148,7 +145,7 @@ def get_ref_row(contract_no, source_type):
             if not res.empty:
                 return res.iloc[0]
     elif source_type == "原表":
-        col = find_col(original_df, "合同", exact=False)  # 模糊匹配“合同”
+        col = find_col(original_df, "合同", exact=False)
         if col is not None:
             res = original_df[original_df[col].astype(str).str.strip() == contract_no]
             if not res.empty:
@@ -156,14 +153,9 @@ def get_ref_row(contract_no, source_type):
     return None
 
 # =====================================
-# 六、执行审核
+# 六、执行审核（含家访检查）
 # =====================================
-try:
-    wb = Workbook()
-except Exception as e:
-    st.error(f"❌ Workbook 初始化失败: {e}")
-    st.stop()
-
+wb = Workbook()
 ws = wb.active
 for i, col_name in enumerate(tc_df.columns, start=1):
     ws.cell(1, i, col_name)
@@ -182,16 +174,13 @@ for idx, row in tc_df.iterrows():
     contract_no = row.get(contract_col_main)
     if pd.isna(contract_no):
         continue
-
     row_has_error = False
 
     for main_kw, (src, ref_kw, tol, mult) in MAPPING.items():
-        exact_main = "期限" in main_kw or main_kw == "人员类型"
-        main_col = find_col(tc_df, main_kw, exact=exact_main)
+        main_col = find_col(tc_df, main_kw, exact=False)
         if not main_col:
             continue
 
-        # 判断使用哪个参考表
         if main_kw == "收益率":
             person_type = str(row[person_type_col]).strip()
             if person_type == "轻卡":
@@ -205,14 +194,18 @@ for idx, row in tc_df.iterrows():
         if ref_row is None:
             continue
 
-        ref_col = find_col(ref_row, ref_kw, exact=(main_kw == "人员类型"))
+        # 自动匹配参考列
+        ref_col = find_col(ref_row.index if hasattr(ref_row, "index") else ref_row, ref_kw, exact=False)
         if not ref_col:
+            ref_col = find_col(ref_row, ref_kw, exact=False)
+        try:
+            ref_val = ref_row[ref_kw] if ref_kw in ref_row else None
+        except:
             continue
 
         main_val = row[main_col]
-        ref_val = ref_row[ref_col]
 
-        # 日期比对
+        # 日期类
         if "日期" in main_kw or main_kw == "二次交接":
             try:
                 main_dt = pd.to_datetime(main_val, errors='coerce').normalize()
@@ -220,9 +213,9 @@ for idx, row in tc_df.iterrows():
             except:
                 main_dt = ref_dt = pd.NaT
             if pd.isna(main_dt) or pd.isna(ref_dt) or main_dt != ref_dt:
+                ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
                 row_has_error = True
                 total_errors += 1
-                ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
         else:
             m = normalize_num(main_val)
             r = normalize_num(ref_val)
@@ -233,15 +226,16 @@ for idx, row in tc_df.iterrows():
                 if "期限" in main_kw:
                     r *= mult
                 if abs(m - r) > tol:
+                    ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
                     row_has_error = True
                     total_errors += 1
-                    ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
             else:
                 if normalize_text(main_val) != normalize_text(ref_val):
+                    ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
                     row_has_error = True
                     total_errors += 1
-                    ws.cell(idx + 2, list(tc_df.columns).index(main_col) + 1).fill = red_fill
 
+    # 标黄整行合同号
     if row_has_error:
         ws.cell(idx + 2, list(tc_df.columns).index(contract_col_main) + 1).fill = yellow_fill
 
