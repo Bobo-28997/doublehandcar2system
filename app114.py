@@ -71,42 +71,44 @@ def normalize_contract_key(series: pd.Series) -> pd.Series:
 
 def prepare_ref_df(df_list, required_cols_dict, prefix):
     """
-    (新) 预处理参考DF列表：合并、标准化Key、提取列、重命名。
-    required_cols_dict: {'合同': '合同', 'xirr': 'xirr', ...}
+    (新 V2) 预处理参考DF列表：合并、标准化Key、提取列、重命名
+    required_cols_dict: {'合同': ('合同', False), '类型': ('类型', True), ...}
     """
     if not df_list or all(df is None for df in df_list):
         st.warning(f"⚠️ {prefix} 数据列表为空，跳过预处理。")
         return pd.DataFrame(columns=['__KEY__'])
         
     try:
-        # 1. 合并所有来源 (例如 fk_dfs)
         df_concat = pd.concat([df for df in df_list if df is not None], ignore_index=True)
     except Exception as e:
         st.error(f"❌ 预处理 {prefix} 时合并失败: {e}")
         return pd.DataFrame(columns=['__KEY__'])
 
-    # 2. 查找合同列
-    contract_col_kw = required_cols_dict.get('合同', '合同') # 默认用 "合同" 关键字
-    contract_col = find_col(df_concat, contract_col_kw)
+    # 2. 查找合同列 (从字典中获取元组)
+    contract_col_kw, contract_exact = required_cols_dict.get('合同', ('合同', False))
+    contract_col = find_col(df_concat, contract_col_kw, exact=contract_exact)
+    
     if not contract_col:
-        st.warning(f"⚠️ 在 {prefix} 参考表中未找到'合同'列，跳过此数据源。")
+        st.warning(f"⚠️ 在 {prefix} 参考表中未找到'合同'列 (关键字: '{contract_col_kw}', 精确: {contract_exact})，跳过此数据源。")
         return pd.DataFrame(columns=['__KEY__'])
         
     # 3. 提取列 & 重命名
     cols_to_extract = [contract_col]
     col_mapping = {} # '原始列名' -> 'ref_prefix_标准名'
     
-    for std_name, col_kw in required_cols_dict.items():
-        if std_name == '合同': continue # 合同列已处理
+    for std_name, (col_kw, is_exact) in required_cols_dict.items(): # <--- V2: 解包元组
+        if std_name == '合同': continue 
             
-        actual_col = find_col(df_concat, col_kw)
+        actual_col = find_col(df_concat, col_kw, exact=is_exact) # <--- V2: 使用 is_exact
+        
         if actual_col:
             cols_to_extract.append(actual_col)
             col_mapping[actual_col] = f"ref_{prefix}_{std_name}"
         else:
-            st.warning(f"⚠️ 在 {prefix} 参考表中未找到列 (关键字: '{col_kw}')")
+            # V2: 提供更详细的警告
+            st.warning(f"⚠️ 在 {prefix} 参考表中未找到列 (关键字: '{col_kw}', 精确: {is_exact})")
             
-    if len(cols_to_extract) == 1: # 只有合同列
+    if len(cols_to_extract) == 1: 
         st.warning(f"⚠️ 在 {prefix} 参考表中未找到任何所需字段，跳过。")
         return pd.DataFrame(columns=['__KEY__'])
 
@@ -116,12 +118,14 @@ def prepare_ref_df(df_list, required_cols_dict, prefix):
     std_df = std_df.rename(columns=col_mapping)
     
     final_cols = ['__KEY__'] + list(col_mapping.values())
-    std_df = std_df[final_cols]
+    
+    # 确保 final_cols 都在 std_df 中
+    final_cols_in_df = [col for col in final_cols if col in std_df.columns]
+    std_df = std_df[final_cols_in_df]
     
     # 5. 去重
     std_df = std_df.drop_duplicates(subset=['__KEY__'], keep='first')
     return std_df
-
 
 def compare_series_vec(s_main, s_ref, compare_type='text', tolerance=0, multiplier=1):
     """
@@ -198,6 +202,7 @@ ec_file = find_file(uploaded_files, "二次明细")
 original_file = find_file(uploaded_files, "原表")
 
 # 1. 读取主表 (提成)
+# ... (这部分不变, 保持原样) ...
 tc_xls = pd.ExcelFile(tc_file)
 sheet_total = next((s for s in tc_xls.sheet_names if "总" in s), None)
 sheets_qk = [s for s in tc_xls.sheet_names if "轻卡" in s]
@@ -213,16 +218,19 @@ tc_sheets = {
 # --- 放款明细 (fk) ---
 fk_xls = pd.ExcelFile(fk_file)
 fk_dfs_raw = [pd.read_excel(fk_file, sheet_name=s) for s in fk_xls.sheet_names if "潮掣" in s]
+
+# --- VVVV (【核心修改】更新为 (关键字, 是否精确) 的元组) VVVV ---
 fk_cols_needed = {
-    '合同': '合同',
-    '放款日期': '放款日期',
-    '提报人员': '提报人员',
-    '城市经理': '城市经理',
-    '租赁本金': '租赁本金',
-    'xirr': 'xirr',
-    '租赁期限/年': '租赁期限/年',
-    '家访': '家访',
-    '类型': '类型'
+    # {标准名: (关键字, 精确匹配)}
+    '合同': ('合同', False),
+    '放款日期': ('放款日期', False),
+    '提报人员': ('提报人员', False),
+    '城市经理': ('城市经理', False),
+    '租赁本金': ('租赁本金', False),
+    'xirr': ('xirr', False),
+    '租赁期限/年': ('租赁期限/年', False), # 模糊匹配也OK，但精确更好
+    '家访': ('家访', False),
+    '类型': ('类型', True) # <--- 这就是您要的修复！
 }
 fk_std = prepare_ref_df(fk_dfs_raw, fk_cols_needed, "fk")
 
@@ -230,18 +238,19 @@ fk_std = prepare_ref_df(fk_dfs_raw, fk_cols_needed, "fk")
 ec_xls = pd.ExcelFile(ec_file)
 ec_dfs_raw = [pd.read_excel(ec_file, sheet_name=s) for s in ec_xls.sheet_names]
 ec_cols_needed = {
-    '合同': '合同',
-    '出本流程时间': '出本流程时间'
+    '合同': ('合同', False),
+    '出本流程时间': ('出本流程时间', False)
 }
 ec_std = prepare_ref_df(ec_dfs_raw, ec_cols_needed, "ec")
 
 # --- 原表 (original) ---
 original_dfs_raw = [pd.read_excel(original_file)]
 original_cols_needed = {
-    '合同': '合同',
-    '年化nim': '年化nim'
+    '合同': ('合同', False),
+    '年化nim': ('年化nim', False)
 }
 orig_std = prepare_ref_df(original_dfs_raw, original_cols_needed, "original")
+# --- ^^^^ (修改结束) ^^^^ ---
 
 all_std_dfs = {
     "fk": fk_std,
@@ -258,7 +267,7 @@ MAPPING = {
     "提报人员": ("放款明细", "提报人员", 0, 1),
     "城市经理": ("放款明细", "城市经理", 0, 1),
     "租赁本金": ("放款明细", "租赁本金", 0, 1),
-    "收益率": ("放款明细", "xirr", 0.005, 1), # (默认值, 逻辑中会覆盖)
+    "收益率": ("放款明细", "xirr", 0.005, 1), 
     "期限": ("放款明细", "租赁期限/年", 0.5, 12),
     "家访": ("放款明细", "家访", 0, 1),
     "人员类型": ("放款明细", "类型", 0, 1),
