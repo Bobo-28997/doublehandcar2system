@@ -12,6 +12,8 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 st.title("📊 模拟人事用薪资计算表自动审核系统-3")
 
+st.image("image/app3.png")
+
 # ========== 上传文件 ==========
 uploaded_files = st.file_uploader(
     "请上传文件名中包含以下字段的文件：“提成”、“放款明细”、“二次明细”和“原表”的xlsx文件。最后誊写，需检的表为提成表。使用2数据时，本司-1月格式的表需按照要求在文件名中加入”提成”，“原表”等区分。",
