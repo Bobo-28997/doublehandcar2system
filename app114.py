@@ -319,22 +319,29 @@ def audit_one_sheet_vec(tc_df, sheet_label, all_std_dfs):
         
         # 4. === (核心) 处理条件逻辑 ===
         if main_kw == "收益率":
-            person_type_col = find_col(merged_df, "人员类型", exact=True)
-            if not person_type_col:
-                continue # 无法判断类型，跳过
-                
-            s_ref_fk = merged_df.get('ref_fk_xirr') # 放款明细
-            s_ref_orig = merged_df.get('ref_orig_年化nim') # 原表
-            
-            # 默认使用放款明细
-            s_ref_final = s_ref_fk.copy()
-            
-            # 如果类型为"轻卡", 则覆盖为"原表"的值
-            if s_ref_orig is not None:
-                mask_light_truck = (merged_df[person_type_col].astype(str).str.strip() == "轻卡")
-                s_ref_final.loc[mask_light_truck] = s_ref_orig.loc[mask_light_truck]
-            
-            errors_mask = compare_series_vec(s_main, s_ref_final, compare_type='rate', tolerance=tol)
+            person_type_col = find_col(merged_df, "人员类型", exact=True)
+            if not person_type_col:
+                continue # 无法判断类型，跳过
+                
+            s_ref_fk = merged_df.get('ref_fk_xirr') # 放款明细
+            s_ref_orig = merged_df.get('ref_orig_年化nim') # 原表
+            
+            # (健壮性检查: 如果 'xirr' 列不存在，则创建一个空的 Series)
+            if s_ref_fk is None:
+                s_ref_fk = pd.Series(pd.NA, index=merged_df.index)
+            
+            # 默认使用放款明细
+            s_ref_final = s_ref_fk.copy()
+            
+            # 如果类型为"轻卡", 则覆盖为"原表"的值
+            if s_ref_orig is not None:
+                # --- VVVV (【核心修复】使用 normalize_text) VVVV ---
+                person_type_normalized = merged_df[person_type_col].apply(normalize_text)
+                mask_light_truck = (person_type_normalized == "轻卡") # '轻卡' 已经是小写
+                # --- ^^^^ (修复结束) ^^^^ ---
+                s_ref_final.loc[mask_light_truck] = s_ref_orig.loc[mask_light_truck]
+            
+            errors_mask = compare_series_vec(s_main, s_ref_final, compare_type='rate', tolerance=tol)
         
         elif "日期" in main_kw or main_kw == "二次交接":
             ref_col_name = f"ref_{'ec' if src == '二次明细' else 'fk'}_{ref_kw}"
