@@ -40,15 +40,19 @@ def normalize_text(val):
     return ''.join(unicodedata.normalize('NFKC', ch) for ch in s).lower().strip()
 
 def normalize_num(val):
-    if pd.isna(val):
-        return None
-    s = str(val).replace(",", "").replace("%", "").strip()
-    if s in ["", "-", "nan"]:
-        return None
-    try:
-        return float(s)
-    except:
-        return None
+    if pd.isna(val):
+        return None
+    s = str(val).replace(",", "").strip() # <--- 1. 不再替换 "%"
+    if s in ["", "-", "nan"]:
+        return None
+    try:
+        # 2. 在这里检查和处理 "%"
+        if "%" in s:
+            s = s.replace("%", "")
+            return float(s) / 100
+        return float(s)
+    except:
+        return s
 
 def find_col(df_like, keyword, exact=False):
     key = keyword.strip().lower()
@@ -160,12 +164,7 @@ def compare_series_vec(s_main, s_ref, compare_type='text', tolerance=0, multipli
     elif compare_type == 'num' or compare_type == 'rate' or compare_type == 'term':
         s_main_norm = s_main.apply(normalize_num)
         s_ref_norm = s_ref.apply(normalize_num)
-        
-        # 特殊：收益率（百分比/小数）
-        if compare_type == 'rate':
-            s_main_norm = s_main_norm.apply(lambda x: x / 100 if (x is not None and x > 1) else x)
-            s_ref_norm = s_ref_norm.apply(lambda x: x / 100 if (x is not None and x > 1) else x)
-            
+                   
         # 特殊：期限（乘数）
         if compare_type == 'term':
             s_ref_norm = pd.to_numeric(s_ref_norm, errors='coerce') * multiplier
@@ -270,7 +269,7 @@ MAPPING = {
     "提报人员": ("放款明细", "提报人员", 0, 1),
     "城市经理": ("放款明细", "城市经理", 0, 1),
     "租赁本金": ("放款明细", "租赁本金", 0, 1),
-    "收益率": ("放款明细", "xirr", 0.01, 1), 
+    "收益率": ("放款明细", "xirr", 0.005, 1), 
     "期限": ("放款明细", "租赁期限/年", 0.5, 12),
     "家访": ("放款明细", "家访", 0, 1),
     "人员类型": ("放款明细", "类型", 0, 1),
