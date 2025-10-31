@@ -251,7 +251,7 @@ original_cols_needed = {
     '合同': ('合同', False),
     '年化nim': ('年化nim', False)
 }
-orig_std = prepare_ref_df(original_dfs_raw, original_cols_needed, "original")
+orig_std = prepare_ref_df(original_dfs_raw, original_cols_needed, "orig")
 # --- ^^^^ (修改结束) ^^^^ ---
 
 all_std_dfs = {
