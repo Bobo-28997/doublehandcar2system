@@ -232,7 +232,7 @@ fk_cols_needed = {
     'xirr': ('xirr', False),
     '租赁期限/年': ('租赁期限/年', False), # 模糊匹配也OK，但精确更好
     '家访': ('家访', False),
-    '类型': ('类型', True)
+    '类型': ('类型', True),
     '放款金额': ('放款金额', False)# <--- 这就是您要的修复！
 }
 fk_std = prepare_ref_df(fk_dfs_raw, fk_cols_needed, "fk")
